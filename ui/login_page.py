@@ -26,7 +26,6 @@ def show_login_page() -> None:
                 else:
                     st.error(result)
 
-        st.info("Demo account: demo@example.com / demo1234")
 
     with tab_register:
         with st.form("register_form"):
