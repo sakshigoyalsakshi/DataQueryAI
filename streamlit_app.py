@@ -1,4 +1,3 @@
-import datetime
 import os
 
 import streamlit as st
@@ -14,8 +13,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-from extra_streamlit_components import CookieManager
 from auth.auth import create_demo_user_if_missing, decode_token
+from auth.sessions import create_session, get_session_user, delete_session
 from data.db import init_db
 from data.csv_manager import preload_sample_data
 from ui.login_page import show_login_page
@@ -26,7 +25,7 @@ from ui.ask_page import show_ask_page
 
 SAMPLE_CSV = os.path.join(os.path.dirname(__file__), "sample_data", "ecommerce_sales.csv")
 SAMPLE_PDF = os.path.join(os.path.dirname(__file__), "sample_data", "business_report.pdf")
-COOKIE_NAME = "dq_auth_token"
+SESSION_PARAM = "session"
 
 
 def _preload_sample_pdf(user_id: str, pdf_path: str) -> None:
@@ -77,22 +76,22 @@ def startup() -> None:
 
 startup()
 
-cookie_manager = CookieManager()
-
 
 def get_current_user() -> "dict | None":
-    # Check session state first (fast path)
-    token = st.session_state.get("token")
+    user = st.session_state.get("user")
+    if user:
+        return user
 
-    # Fall back to cookie on fresh load / refresh
-    if not token:
-        token = cookie_manager.get(COOKIE_NAME)
-        if token:
-            st.session_state["token"] = token
+    session_id = st.query_params.get(SESSION_PARAM)
+    if session_id:
+        user = get_session_user(session_id)
+        if user:
+            st.session_state["user"] = user
+            return user
+        # Session expired or invalid — clear the stale param
+        st.query_params.clear()
 
-    if not token:
-        return None
-    return decode_token(token)
+    return None
 
 
 def main() -> None:
@@ -114,7 +113,10 @@ def main() -> None:
         )
         st.divider()
         if st.button("Logout", use_container_width=True):
-            cookie_manager.delete(COOKIE_NAME)
+            session_id = st.query_params.get(SESSION_PARAM)
+            if session_id:
+                delete_session(session_id)
+            st.query_params.clear()
             st.session_state.clear()
             st.rerun()
 
@@ -131,9 +133,11 @@ def main() -> None:
 
 
 def _handle_login(token: str) -> None:
-    st.session_state["token"] = token
-    cookie_manager.set(COOKIE_NAME, token,
-                       expires_at=datetime.datetime.now() + datetime.timedelta(days=1))
+    user = decode_token(token)
+    if user:
+        session_id = create_session(user["sub"], user["email"])
+        st.session_state["user"] = user
+        st.query_params[SESSION_PARAM] = session_id
     st.rerun()
 
 
