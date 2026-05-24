@@ -24,10 +24,14 @@ RULES:
 - "pdf"  → qualitative questions: explanations, policies, reports, text content, definitions, summaries
 - "both" → only when the question genuinely needs information from BOTH structured data AND documents
 - When in doubt between csv and pdf, prefer "csv" for anything numerical or analytical
-- When source is "csv" or "both", also pick the single most relevant CSV file based on its column names matching the question
+- When source is "csv" or "both", pick the single most relevant CSV file based on its column names
+
+When source is "both" you MUST split into two independent sub-questions:
+- csv_question: ask ONLY about the dataset columns (e.g. "What is our total revenue from Electronics?"). Must be answerable by SQL alone. NO mention of global/industry/external figures.
+- pdf_question: ask ONLY about what the document contains (e.g. "What was Electronics' share of global e-commerce revenue according to the report?"). NO mention of our dataset.
 
 Return JSON only, no markdown:
-{"source": "csv" | "pdf" | "both", "reasoning": "one concise sentence", "csv_filename": "filename.csv or null"}"""
+{"source": "csv" | "pdf" | "both", "reasoning": "one concise sentence", "csv_filename": "filename.csv or null", "csv_question": "SQL-only sub-question or null", "pdf_question": "document-only sub-question or null"}"""
 
 
 def detect_intent(
@@ -64,7 +68,7 @@ def detect_intent(
                 {"role": "user", "content": user_message},
             ],
             temperature=0.1,
-            max_tokens=100,
+            max_tokens=250,
         )
         raw = response.choices[0].message.content.strip()
         raw = re.sub(r"^```(?:json)?\s*", "", raw)

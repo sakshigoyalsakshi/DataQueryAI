@@ -17,8 +17,8 @@ _SOURCE_LABELS = {
 }
 
 
-def _run_csv(question: str, user_id: str, csv_files: list[dict], suggested_filename: str = None) -> None:
-    """Run NL-to-SQL on the best matching CSV."""
+def _run_csv(question: str, user_id: str, csv_files: list[dict], suggested_filename: str = None) -> "str | None":
+    """Run NL-to-SQL on the best matching CSV. Returns a text summary for history."""
     allowed_tables = {f["table_name"] for f in csv_files}
 
     # Use LLM-suggested filename first, then heuristic, then first file
@@ -40,7 +40,7 @@ def _run_csv(question: str, user_id: str, csv_files: list[dict], suggested_filen
 
     if "error" in result:
         st.error(f"Could not answer from CSV: {result['error']}")
-        return
+        return None
 
     sql = result.get("sql", "")
     explanation = result.get("explanation", "")
@@ -50,7 +50,7 @@ def _run_csv(question: str, user_id: str, csv_files: list[dict], suggested_filen
     is_valid, val_error = validate_sql(sql, allowed_tables)
     if not is_valid:
         st.error(f"SQL safety check failed: {val_error}")
-        return
+        return None
 
     with st.expander("Generated SQL", expanded=False):
         st.code(sql, language="sql")
@@ -62,26 +62,31 @@ def _run_csv(question: str, user_id: str, csv_files: list[dict], suggested_filen
 
     if exec_error:
         st.error(f"Query failed: {exec_error}")
-        return
+        return None
 
     if df is None or df.empty:
         st.warning("Query returned no results.")
-        return
+        return None
 
+    answer_text = None
     if viz_type == "text" and len(df) == 1 and len(df.columns) == 1:
         val = df.iloc[0, 0]
         label = viz_config.get("title") or df.columns[0]
         st.metric(label=label, value=f"{val:,}" if isinstance(val, (int, float)) else str(val))
+        answer_text = f"{label}: {val:,}" if isinstance(val, (int, float)) else f"{label}: {val}"
     elif viz_type in ("bar", "line", "pie", "scatter"):
         fig = build_figure(df, viz_type, viz_config)
         if fig:
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.dataframe(df, use_container_width=True)
+        answer_text = explanation or f"Chart with {len(df)} row(s) from {selected['filename']}"
     else:
         st.dataframe(df, use_container_width=True)
+        answer_text = explanation or f"Table with {len(df)} row(s) from {selected['filename']}"
 
     st.caption(f"Source: **{selected['filename']}** ({selected['row_count']:,} rows) · {len(df):,} result row(s)")
+    return answer_text
 
 
 def _pick_csv(csv_files: list[dict], question: str) -> dict:
@@ -95,16 +100,18 @@ def _pick_csv(csv_files: list[dict], question: str) -> dict:
     return best
 
 
-def _run_pdf(question: str, user_id: str) -> None:
+def _run_pdf(question: str, user_id: str) -> "str | None":
+    """Run RAG on the user's PDFs. Returns the answer text for history."""
     with st.spinner("Searching documents..."):
         result = answer_question(user_id, question)
     if "error" in result:
         st.error(result["error"])
-        return
+        return None
     st.write(result["answer"])
     if result["sources"]:
         source_strs = [f"**{s['filename']}**, p.{s['page']}" for s in result["sources"]]
         st.caption("Sources: " + " · ".join(source_strs))
+    return result["answer"]
 
 
 def show_ask_page(user_id: str) -> None:
@@ -143,7 +150,8 @@ def show_ask_page(user_id: str) -> None:
         with st.chat_message("assistant"):
             label, icon = _SOURCE_LABELS.get(turn["source"], ("", ""))
             st.caption(f"{icon} {label}")
-            st.write(turn["answer_summary"])
+            if turn.get("answer_text"):
+                st.write(turn["answer_text"])
 
     question = st.chat_input("Ask anything about your data or documents...")
     if not question:
@@ -172,23 +180,24 @@ def show_ask_page(user_id: str) -> None:
         suggested_csv = intent.get("csv_filename") if source in ("csv", "both") else None
 
         if source == "csv":
-            _run_csv(question, user_id, csv_files, suggested_filename=suggested_csv)
-            answer_summary = f"[CSV result] {question}"
+            answer_text = _run_csv(question, user_id, csv_files, suggested_filename=suggested_csv)
 
         elif source == "pdf":
-            _run_pdf(question, user_id)
-            answer_summary = f"[Document result] {question}"
+            answer_text = _run_pdf(question, user_id)
 
-        else:  # both — scope each question to its own source
-            csv_question = f"Using only the structured CSV data available, answer this: {question}"
+        else:  # both — use LLM-split sub-questions so each pipeline only sees its half
+            csv_question = intent.get("csv_question") or question
+            pdf_question = intent.get("pdf_question") or question
+            csv_text = pdf_text = None
             with st.expander("📊 From CSV data", expanded=True):
-                _run_csv(csv_question, user_id, csv_files, suggested_filename=suggested_csv)
+                csv_text = _run_csv(csv_question, user_id, csv_files, suggested_filename=suggested_csv)
             with st.expander("📄 From documents", expanded=True):
-                _run_pdf(question, user_id)
-            answer_summary = f"[CSV + Document result] {question}"
+                pdf_text = _run_pdf(pdf_question, user_id)
+            parts = [t for t in (csv_text, pdf_text) if t]
+            answer_text = "\n\n".join(parts) if parts else None
 
         st.session_state["ask_history"].append({
             "question": question,
             "source": source,
-            "answer_summary": answer_summary,
+            "answer_text": answer_text,
         })
