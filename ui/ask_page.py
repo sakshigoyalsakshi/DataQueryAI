@@ -17,12 +17,19 @@ _SOURCE_LABELS = {
 }
 
 
-def _run_csv(question: str, user_id: str, csv_files: list[dict]) -> None:
-    """Run NL-to-SQL on the first matching CSV (or let user pick if multiple)."""
+def _run_csv(question: str, user_id: str, csv_files: list[dict], suggested_filename: str = None) -> None:
+    """Run NL-to-SQL on the best matching CSV."""
     allowed_tables = {f["table_name"] for f in csv_files}
 
-    # If multiple CSVs, pick the one most likely relevant (use first for simplicity)
-    selected = csv_files[0] if len(csv_files) == 1 else _pick_csv(csv_files, question)
+    # Use LLM-suggested filename first, then heuristic, then first file
+    if suggested_filename:
+        selected = next((f for f in csv_files if f["filename"] == suggested_filename), None)
+        if not selected:
+            selected = _pick_csv(csv_files, question)
+    elif len(csv_files) == 1:
+        selected = csv_files[0]
+    else:
+        selected = _pick_csv(csv_files, question)
 
     schema_str = get_table_schema(
         selected["table_name"], selected["columns_info"], selected["row_count"]
@@ -162,17 +169,20 @@ def show_ask_page(user_id: str) -> None:
         label, icon = _SOURCE_LABELS[source]
         st.caption(f"{icon} {label} — *{reasoning}*")
 
+        suggested_csv = intent.get("csv_filename") if source in ("csv", "both") else None
+
         if source == "csv":
-            _run_csv(question, user_id, csv_files)
+            _run_csv(question, user_id, csv_files, suggested_filename=suggested_csv)
             answer_summary = f"[CSV result] {question}"
 
         elif source == "pdf":
             _run_pdf(question, user_id)
             answer_summary = f"[Document result] {question}"
 
-        else:  # both
+        else:  # both — scope each question to its own source
+            csv_question = f"Using only the structured CSV data available, answer this: {question}"
             with st.expander("📊 From CSV data", expanded=True):
-                _run_csv(question, user_id, csv_files)
+                _run_csv(csv_question, user_id, csv_files, suggested_filename=suggested_csv)
             with st.expander("📄 From documents", expanded=True):
                 _run_pdf(question, user_id)
             answer_summary = f"[CSV + Document result] {question}"

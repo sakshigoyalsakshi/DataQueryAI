@@ -24,9 +24,10 @@ RULES:
 - "pdf"  → qualitative questions: explanations, policies, reports, text content, definitions, summaries
 - "both" → only when the question genuinely needs information from BOTH structured data AND documents
 - When in doubt between csv and pdf, prefer "csv" for anything numerical or analytical
+- When source is "csv" or "both", also pick the single most relevant CSV file based on its column names matching the question
 
 Return JSON only, no markdown:
-{"source": "csv" | "pdf" | "both", "reasoning": "one concise sentence"}"""
+{"source": "csv" | "pdf" | "both", "reasoning": "one concise sentence", "csv_filename": "filename.csv or null"}"""
 
 
 def detect_intent(
@@ -70,7 +71,7 @@ def detect_intent(
         raw = re.sub(r"\s*```$", "", raw)
         result = json.loads(raw)
         if result.get("source") not in ("csv", "pdf", "both"):
-            return {"source": "both", "reasoning": "Could not determine source."}
+            return {"source": "both", "reasoning": "Could not determine source.", "csv_filename": None}
         return result
     except Exception:
-        return {"source": "both", "reasoning": "Could not determine source, querying all."}
+        return {"source": "both", "reasoning": "Could not determine source, querying all.", "csv_filename": None}
