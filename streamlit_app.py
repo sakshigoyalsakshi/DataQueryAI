@@ -1,3 +1,4 @@
+import datetime
 import os
 
 import streamlit as st
@@ -13,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-from streamlit_cookies_controller import CookieController
+from extra_streamlit_components import CookieManager
 from auth.auth import create_demo_user_if_missing, decode_token
 from data.db import init_db
 from data.csv_manager import preload_sample_data
@@ -76,7 +77,7 @@ def startup() -> None:
 
 startup()
 
-controller = CookieController()
+cookie_manager = CookieManager()
 
 
 def get_current_user() -> "dict | None":
@@ -85,13 +86,9 @@ def get_current_user() -> "dict | None":
 
     # Fall back to cookie on fresh load / refresh
     if not token:
-        try:
-            token = controller.get(COOKIE_NAME)
-        except Exception:
-            token = None
+        token = cookie_manager.get(COOKIE_NAME)
         if token:
             st.session_state["token"] = token
-            st.rerun()  # cookie just became available; re-render as authenticated user
 
     if not token:
         return None
@@ -117,7 +114,7 @@ def main() -> None:
         )
         st.divider()
         if st.button("Logout", use_container_width=True):
-            controller.remove(COOKIE_NAME)
+            cookie_manager.delete(COOKIE_NAME)
             st.session_state.clear()
             st.rerun()
 
@@ -135,7 +132,8 @@ def main() -> None:
 
 def _handle_login(token: str) -> None:
     st.session_state["token"] = token
-    controller.set(COOKIE_NAME, token, max_age=86400)  # 24 hours
+    cookie_manager.set(COOKIE_NAME, token,
+                       expires_at=datetime.datetime.now() + datetime.timedelta(days=1))
     st.rerun()
 
 
