@@ -15,7 +15,7 @@ An intelligent data query and visualization system that lets you ask natural lan
 
 ## Bonus Features Implemented
 
-Two bonus features from the assignment have been implemented:
+Three bonus features from the assignment have been implemented:
 
 ### 1. Document Q&A / RAG (PDF Upload)
 Upload PDF documents and ask natural language questions — answers include page-level citations showing exactly where the information came from. Built with:
@@ -29,9 +29,47 @@ The Query Data page maintains a full conversation thread per dataset. The last 3
 - *"Now show only Electronics and Clothing"* → filtered bar chart
 - *"Sort that by revenue descending"* → reordered result
 
+### 3. Intent Detection — Ask Anything
+A unified **Ask Anything** page automatically routes questions to the right data source:
+- **CSV** for quantitative questions (totals, averages, filters, trends)
+- **PDF** for qualitative questions (reports, definitions, summaries)
+- **Both** when the question genuinely needs structured data and document context
+
+When routing to both, the LLM splits the question into two focused sub-questions — one pure SQL query and one pure document query — so each pipeline only sees its relevant half. The router also identifies the most relevant CSV file when multiple datasets are uploaded.
+
 ---
 
-## Sample Queries — CSV (Query Data page)
+## Sample Queries — Ask Anything page
+
+### CSV-only
+| # | Query | Expected Result |
+|---|-------|----------------|
+| 1 | What is the total revenue by category? | Bar chart |
+| 2 | Which region has the highest average order value? | Bar chart |
+| 3 | How did monthly revenue trend over 2024? | Line chart |
+| 4 | What percentage of orders came from each region? | Pie chart |
+| 5 | What is the total number of orders? | Single number |
+
+### PDF-only
+| # | Query | Expected Result |
+|---|-------|----------------|
+| 1 | What was the global e-commerce market size in 2023? | $5.8 trillion (p.1) |
+| 2 | Which region had the highest e-commerce sales? | Asia-Pacific at $2.9T (p.2) |
+| 3 | What percentage of transactions were mobile? | 60% (p.1) |
+| 4 | What is the projected market size for 2024? | $6.4 trillion (p.8) |
+| 5 | How did Amazon perform in 2023? | $514B GMV, 37.6% market share (p.7) |
+
+### Both sources
+| # | Query | Expected Result |
+|---|-------|----------------|
+| 1 | What is our total revenue by category, and what does the report say about each category's global market size? | Chart + document answer |
+| 2 | Which region generates the most revenue in our data, and which region led global e-commerce sales? | Chart + document answer |
+| 3 | How much revenue did we make from Electronics, and what was Electronics' share of global e-commerce revenue? | Metric + document answer |
+| 4 | Show our monthly revenue trend, and what was the overall e-commerce market growth rate in 2023? | Line chart + document answer |
+
+---
+
+## Sample Queries — Query Data page
 
 The pre-loaded `ecommerce_sales.csv` has columns: `order_id`, `date`, `product_name`, `category`, `region`, `quantity`, `unit_price`, `discount_pct`, `revenue`, `customer_id`.
 
@@ -52,7 +90,7 @@ The pre-loaded `ecommerce_sales.csv` has columns: `order_id`, `date`, `product_n
 
 ---
 
-## Sample Queries — Document Q&A (RAG page)
+## Sample Queries — Document Q&A page
 
 The pre-loaded `business_report.pdf` is a Global E-commerce Industry Report 2023 covering market size, regional breakdown, product categories, consumer trends, and 2024 projections.
 
@@ -76,7 +114,7 @@ streamlit_app.py        <- Entry point, session management, page routing
 |
 +-- auth/
 |   +-- auth.py         <- Register, login, bcrypt hashing, JWT creation/decode
-|   +-- models.py       <- User dataclass
+|   +-- sessions.py     <- Server-side session store (create, lookup, delete)
 |
 +-- data/
 |   +-- db.py           <- SQLite init, connection factory (read-only mode)
@@ -88,6 +126,7 @@ streamlit_app.py        <- Entry point, session management, page routing
 |   +-- sql_validator.py   <- Block destructive keywords, enforce SELECT-only
 |   +-- query_executor.py  <- Run SQL on SQLite in read-only mode
 |   +-- viz_recommender.py <- Map LLM viz_type -> Plotly figure
+|   +-- intent_detector.py <- Classify question as csv / pdf / both; split sub-questions
 |
 +-- rag/                <- Document Q&A pipeline
 |   +-- pdf_parser.py   <- pypdf text extraction, chunking (1200 char / 150 overlap)
@@ -95,10 +134,11 @@ streamlit_app.py        <- Entry point, session management, page routing
 |   +-- rag_pipeline.py <- Retrieve top-6 chunks, generate answer with citations
 |
 +-- ui/
-|   +-- login_page.py   <- Login / Register forms with cookie-based persistence
+|   +-- login_page.py   <- Login / Register forms
 |   +-- upload_page.py  <- CSV file upload, preview, delete
 |   +-- query_page.py   <- Chat-style NL query with conversation history
 |   +-- rag_page.py     <- PDF upload, indexing, and Q&A chat interface
+|   +-- ask_page.py     <- Unified Ask Anything page with intent-based routing
 |
 +-- sample_data/
     +-- ecommerce_sales.csv     <- 650-row pre-loaded e-commerce dataset
@@ -114,6 +154,14 @@ streamlit_app.py        <- Entry point, session management, page routing
 5. **Validation** — regex block-list rejects DROP/DELETE/UPDATE/INSERT/TRUNCATE/ALTER/CREATE; confirm query starts with SELECT; verify table references are user-owned
 6. **Execution** — run on SQLite opened in read-only URI mode (`file:app.db?mode=ro`)
 7. **Rendering** — map `viz_type` to Plotly Express chart (bar/line/pie/scatter) or `st.dataframe` / `st.metric`
+
+### Intent Detection Pipeline
+
+1. **Context building** — list available CSVs (with column names) and PDF filenames
+2. **LLM classification** — Groq routes to `csv`, `pdf`, or `both` at temperature 0.1
+3. **Sub-question splitting** — for `both`, the LLM returns separate `csv_question` and `pdf_question` so each pipeline only sees its relevant half
+4. **File selection** — for CSV routing, the LLM also picks the most relevant file when multiple CSVs are uploaded
+5. **Fallback** — defaults to `both` on any error
 
 ### RAG Pipeline
 
@@ -154,13 +202,23 @@ CREATE TABLE pdfs (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,        -- random 32-char hex, stored in URL param
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    expires_at TEXT NOT NULL,   -- ISO 8601, 24-hour expiry
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
 -- Each uploaded CSV becomes a dynamic SQLite table named by table_name
 ```
 
 ### Authentication
 
 - Email/password with bcrypt hashing
-- JWT tokens (HS256, 24-hour expiry) persisted in browser cookie via `streamlit-cookies-controller` — survives page refreshes
+- On login: JWT decoded for user info, then a random **server-side session ID** is created in SQLite and stored in the URL query param (`?session=...`) — the JWT itself is never exposed to the browser
+- On refresh: session ID read from URL, looked up in DB, expiry checked — no JS round-trip required
+- On logout: session deleted from DB, URL param cleared
 - Per-user data isolation: CSV tables use opaque user-scoped IDs; SQL validator verifies table ownership; ChromaDB uses separate collections per user
 
 ---
@@ -234,34 +292,39 @@ Two-layer guard: (1) regex block-list on destructive keywords, (2) read-only SQL
 **RAG chunking strategy**
 1200-character chunks with 150-character overlap. Larger chunks (vs the common 500-char default) preserve paragraph-level context, which is critical for business documents where a single fact may span multiple sentences.
 
+**Session persistence approach**
+Streamlit cookie libraries rely on JS components with async timing issues that cause logout on refresh. Instead, a server-side session table in SQLite stores a random session ID mapped to the user. The session ID is placed in the URL query param — readable natively by Python on every render with no JS dependency.
+
 **Trade-offs made**
 - No streaming (single-shot LLM call is fast enough at ~1-2s)
 - No multi-file SQL JOINs across uploaded CSVs
 - SQLite not suitable for high concurrent write load (acceptable for demo scale)
-- No intent detection to automatically route between CSV and PDF queries
+- Session IDs stored in URL query param (visible in address bar; acceptable for demo scope)
 
 **With more time I would add:**
 - Streaming token output from Groq
 - Data profiling on CSV upload (summary stats, null counts, value distributions)
 - Multi-file JOIN queries across uploaded CSVs
-- Intent detection to route questions to CSV or PDF automatically
 - Unit tests for the SQL validator, generator, and RAG pipeline
 - PostgreSQL for production-scale deployments
+- Periodic cleanup of expired sessions from the sessions table
 
 ---
 
 ## AI Tool Usage
 
 This project was built with **Claude Code** (AI coding assistant). Key areas of AI assistance:
-- Boilerplate for bcrypt/JWT auth flow and cookie persistence
+- Boilerplate for bcrypt/JWT auth flow
 - Prompt engineering for the NL-to-SQL system prompt and few-shot examples
 - ChromaDB integration and RAG pipeline structure
 - Plotly chart configuration patterns
+- Intent detection prompt design and sub-question splitting logic
 
 Overridden AI suggestions:
 - AI initially suggested storing CSVs as flat files with separate metadata; switched to loading directly into SQLite tables for simpler querying
 - AI suggested a more complex token refresh flow; simplified to single 24-hour JWT given demo scope
 - AI defaulted to 500-char RAG chunks; increased to 1200 chars after observing retrieval misses on multi-sentence facts
+- AI suggested cookie-based session persistence; replaced with server-side sessions in SQLite after cookie libraries proved unreliable in Streamlit
 
 ---
 
@@ -271,4 +334,4 @@ Overridden AI suggestions:
 - Groq rate limits on free tier (~30 req/min) — if hit, wait a moment and retry
 - Complex multi-table JOINs across uploaded CSV files are not supported
 - RAG does not work on image-based or scanned PDFs (text extraction requires selectable text)
-- User sessions expire after 24 hours (JWT expiry)
+- Sessions expire after 24 hours and expired rows are not automatically purged from the DB
