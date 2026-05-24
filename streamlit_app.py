@@ -23,7 +23,37 @@ from ui.query_page import show_query_page
 from ui.rag_page import show_rag_page
 
 SAMPLE_CSV = os.path.join(os.path.dirname(__file__), "sample_data", "ecommerce_sales.csv")
+SAMPLE_PDF = os.path.join(os.path.dirname(__file__), "sample_data", "business_report.pdf")
 COOKIE_NAME = "dq_auth_token"
+
+
+def _preload_sample_pdf(user_id: str, pdf_path: str) -> None:
+    from data.db import get_conn
+    from rag.pdf_parser import extract_chunks
+    from rag.vector_store import add_chunks
+    from ui.rag_page import _save_pdf_meta
+    import uuid
+    from datetime import datetime, timezone
+
+    filename = os.path.basename(pdf_path)
+    conn = get_conn()
+    try:
+        existing = conn.execute(
+            "SELECT id FROM pdfs WHERE user_id = ? AND filename = ?", (user_id, filename)
+        ).fetchone()
+        if existing:
+            return
+    finally:
+        conn.close()
+
+    with open(pdf_path, "rb") as f:
+        file_bytes = f.read()
+    chunks = extract_chunks(file_bytes, filename)
+    if chunks:
+        doc_id = str(uuid.uuid4())
+        add_chunks(user_id, chunks, doc_id)
+        page_count = max(c["page"] for c in chunks)
+        _save_pdf_meta(user_id, doc_id, filename, page_count, len(chunks))
 
 
 @st.cache_resource
@@ -31,13 +61,16 @@ def startup() -> None:
     """Run once: init DB, ensure demo user and sample data exist."""
     init_db()
     create_demo_user_if_missing()
-    if os.path.exists(SAMPLE_CSV):
-        from data.db import get_conn
-        conn = get_conn()
-        row = conn.execute("SELECT id FROM users WHERE email = ?", ("demo@example.com",)).fetchone()
-        conn.close()
-        if row:
-            preload_sample_data(row[0], SAMPLE_CSV)
+    from data.db import get_conn
+    conn = get_conn()
+    row = conn.execute("SELECT id FROM users WHERE email = ?", ("demo@example.com",)).fetchone()
+    conn.close()
+    if row:
+        demo_id = row[0]
+        if os.path.exists(SAMPLE_CSV):
+            preload_sample_data(demo_id, SAMPLE_CSV)
+        if os.path.exists(SAMPLE_PDF):
+            _preload_sample_pdf(demo_id, SAMPLE_PDF)
 
 
 startup()
