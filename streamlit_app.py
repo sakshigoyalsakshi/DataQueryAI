@@ -91,6 +91,7 @@ def get_current_user() -> "dict | None":
             token = None
         if token:
             st.session_state["token"] = token
+            st.rerun()  # cookie just became available; re-render as authenticated user
 
     if not token:
         return None
