@@ -51,7 +51,10 @@ def get_current_user() -> "dict | None":
 
     # Fall back to cookie on fresh load / refresh
     if not token:
-        token = controller.get(COOKIE_NAME)
+        try:
+            token = controller.get(COOKIE_NAME)
+        except Exception:
+            token = None
         if token:
             st.session_state["token"] = token
 
