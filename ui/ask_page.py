@@ -1,3 +1,4 @@
+import pandas as pd
 import streamlit as st
 
 from data.csv_manager import list_user_files
@@ -17,11 +18,43 @@ _SOURCE_LABELS = {
 }
 
 
-def _run_csv(question: str, user_id: str, csv_files: list[dict], suggested_filename: str = None) -> "str | None":
-    """Run NL-to-SQL on the best matching CSV. Returns a text summary for history."""
+def _render_csv_result(result: dict) -> None:
+    """Re-render a stored CSV result (chart/table/metric) from history."""
+    df = pd.DataFrame(result["df_records"], columns=result["columns"])
+    viz_type = result["viz_type"]
+    viz_config = result["viz_config"]
+
+    if viz_type == "text" and len(df) == 1 and len(df.columns) == 1:
+        val = df.iloc[0, 0]
+        label = viz_config.get("title") or df.columns[0]
+        st.metric(label=label, value=f"{val:,}" if isinstance(val, (int, float)) else str(val))
+    elif viz_type in ("bar", "line", "pie", "scatter"):
+        fig = build_figure(df, viz_type, viz_config)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.dataframe(df, use_container_width=True)
+    else:
+        st.dataframe(df, use_container_width=True)
+
+    st.caption(
+        f"Source: **{result['filename']}** ({result['row_count']:,} rows)"
+        f" · {result['result_count']:,} result row(s)"
+    )
+
+
+def _render_pdf_result(result: dict) -> None:
+    """Re-render a stored PDF result from history."""
+    st.write(result["answer"])
+    if result.get("sources"):
+        source_strs = [f"**{s['filename']}**, p.{s['page']}" for s in result["sources"]]
+        st.caption("Sources: " + " · ".join(source_strs))
+
+
+def _run_csv(question: str, user_id: str, csv_files: list, suggested_filename: str = None) -> "dict | None":
+    """Run NL-to-SQL. Returns a result dict for storage and re-rendering, or None on failure."""
     allowed_tables = {f["table_name"] for f in csv_files}
 
-    # Use LLM-suggested filename first, then heuristic, then first file
     if suggested_filename:
         selected = next((f for f in csv_files if f["filename"] == suggested_filename), None)
         if not selected:
@@ -68,28 +101,21 @@ def _run_csv(question: str, user_id: str, csv_files: list[dict], suggested_filen
         st.warning("Query returned no results.")
         return None
 
-    answer_text = None
-    if viz_type == "text" and len(df) == 1 and len(df.columns) == 1:
-        val = df.iloc[0, 0]
-        label = viz_config.get("title") or df.columns[0]
-        st.metric(label=label, value=f"{val:,}" if isinstance(val, (int, float)) else str(val))
-        answer_text = f"{label}: {val:,}" if isinstance(val, (int, float)) else f"{label}: {val}"
-    elif viz_type in ("bar", "line", "pie", "scatter"):
-        fig = build_figure(df, viz_type, viz_config)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.dataframe(df, use_container_width=True)
-        answer_text = explanation or f"Chart with {len(df)} row(s) from {selected['filename']}"
-    else:
-        st.dataframe(df, use_container_width=True)
-        answer_text = explanation or f"Table with {len(df)} row(s) from {selected['filename']}"
-
-    st.caption(f"Source: **{selected['filename']}** ({selected['row_count']:,} rows) · {len(df):,} result row(s)")
-    return answer_text
+    csv_result = {
+        "df_records": df.to_dict("records"),
+        "columns": list(df.columns),
+        "viz_type": viz_type,
+        "viz_config": viz_config,
+        "filename": selected["filename"],
+        "row_count": selected["row_count"],
+        "result_count": len(df),
+        "explanation": explanation,
+    }
+    _render_csv_result(csv_result)
+    return csv_result
 
 
-def _pick_csv(csv_files: list[dict], question: str) -> dict:
+def _pick_csv(csv_files: list, question: str) -> dict:
     """When multiple CSVs exist, pick the one whose columns best match the question."""
     question_lower = question.lower()
     best, best_score = csv_files[0], 0
@@ -100,18 +126,34 @@ def _pick_csv(csv_files: list[dict], question: str) -> dict:
     return best
 
 
-def _run_pdf(question: str, user_id: str) -> "str | None":
-    """Run RAG on the user's PDFs. Returns the answer text for history."""
+def _run_pdf(question: str, user_id: str) -> "dict | None":
+    """Run RAG. Returns a result dict for storage and re-rendering, or None on failure."""
     with st.spinner("Searching documents..."):
         result = answer_question(user_id, question)
     if "error" in result:
         st.error(result["error"])
         return None
-    st.write(result["answer"])
-    if result["sources"]:
-        source_strs = [f"**{s['filename']}**, p.{s['page']}" for s in result["sources"]]
-        st.caption("Sources: " + " · ".join(source_strs))
-    return result["answer"]
+    pdf_result = {"answer": result["answer"], "sources": result.get("sources", [])}
+    _render_pdf_result(pdf_result)
+    return pdf_result
+
+
+def _render_turn(turn: dict) -> None:
+    """Render a history turn's answer(s), including charts."""
+    source = turn["source"]
+    if source == "both":
+        if turn.get("csv_result"):
+            with st.expander("📊 From CSV data", expanded=True):
+                _render_csv_result(turn["csv_result"])
+        if turn.get("pdf_result"):
+            with st.expander("📄 From documents", expanded=True):
+                _render_pdf_result(turn["pdf_result"])
+    elif source == "csv":
+        if turn.get("csv_result"):
+            _render_csv_result(turn["csv_result"])
+    else:
+        if turn.get("pdf_result"):
+            _render_pdf_result(turn["pdf_result"])
 
 
 def show_ask_page(user_id: str) -> None:
@@ -121,7 +163,6 @@ def show_ask_page(user_id: str) -> None:
     csv_files = list_user_files(user_id)
     pdf_files = _list_pdfs(user_id)
 
-    # Source availability summary
     col1, col2 = st.columns(2)
     with col1:
         if csv_files:
@@ -140,18 +181,17 @@ def show_ask_page(user_id: str) -> None:
 
     st.divider()
 
-    # Conversation history
     if "ask_history" not in st.session_state:
         st.session_state["ask_history"] = []
 
+    # Replay all previous turns with full charts/answers
     for turn in st.session_state["ask_history"]:
         with st.chat_message("user"):
             st.write(turn["question"])
         with st.chat_message("assistant"):
             label, icon = _SOURCE_LABELS.get(turn["source"], ("", ""))
             st.caption(f"{icon} {label}")
-            if turn.get("answer_text"):
-                st.write(turn["answer_text"])
+            _render_turn(turn)
 
     question = st.chat_input("Ask anything about your data or documents...")
     if not question:
@@ -161,7 +201,7 @@ def show_ask_page(user_id: str) -> None:
         st.write(question)
 
     with st.chat_message("assistant"):
-        # Determine routing
+        intent = {}
         if csv_files and not pdf_files:
             source = "csv"
             reasoning = "Only CSV data available."
@@ -179,25 +219,20 @@ def show_ask_page(user_id: str) -> None:
 
         suggested_csv = intent.get("csv_filename") if source in ("csv", "both") else None
 
+        turn = {"question": question, "source": source, "csv_result": None, "pdf_result": None}
+
         if source == "csv":
-            answer_text = _run_csv(question, user_id, csv_files, suggested_filename=suggested_csv)
+            turn["csv_result"] = _run_csv(question, user_id, csv_files, suggested_filename=suggested_csv)
 
         elif source == "pdf":
-            answer_text = _run_pdf(question, user_id)
+            turn["pdf_result"] = _run_pdf(question, user_id)
 
         else:  # both — use LLM-split sub-questions so each pipeline only sees its half
             csv_question = intent.get("csv_question") or question
             pdf_question = intent.get("pdf_question") or question
-            csv_text = pdf_text = None
             with st.expander("📊 From CSV data", expanded=True):
-                csv_text = _run_csv(csv_question, user_id, csv_files, suggested_filename=suggested_csv)
+                turn["csv_result"] = _run_csv(csv_question, user_id, csv_files, suggested_filename=suggested_csv)
             with st.expander("📄 From documents", expanded=True):
-                pdf_text = _run_pdf(pdf_question, user_id)
-            parts = [t for t in (csv_text, pdf_text) if t]
-            answer_text = "\n\n".join(parts) if parts else None
+                turn["pdf_result"] = _run_pdf(pdf_question, user_id)
 
-        st.session_state["ask_history"].append({
-            "question": question,
-            "source": source,
-            "answer_text": answer_text,
-        })
+        st.session_state["ask_history"].append(turn)
