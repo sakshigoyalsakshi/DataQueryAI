@@ -2,7 +2,7 @@ import streamlit as st
 from auth.auth import login_user, register_user
 
 
-def show_login_page() -> None:
+def show_login_page(on_login=None) -> None:
     st.title("DataQuery AI")
     st.caption("Ask natural language questions about your CSV data")
 
@@ -20,9 +20,11 @@ def show_login_page() -> None:
             else:
                 ok, result = login_user(email, password)
                 if ok:
-                    st.session_state["token"] = result
-                    st.session_state["logged_in"] = True
-                    st.rerun()
+                    if on_login:
+                        on_login(result)
+                    else:
+                        st.session_state["token"] = result
+                        st.rerun()
                 else:
                     st.error(result)
 

@@ -13,6 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+from streamlit_cookies_controller import CookieController
 from auth.auth import create_demo_user_if_missing, decode_token
 from data.db import init_db
 from data.csv_manager import preload_sample_data
@@ -22,6 +23,7 @@ from ui.query_page import show_query_page
 from ui.rag_page import show_rag_page
 
 SAMPLE_CSV = os.path.join(os.path.dirname(__file__), "sample_data", "ecommerce_sales.csv")
+COOKIE_NAME = "dq_auth_token"
 
 
 @st.cache_resource
@@ -31,7 +33,6 @@ def startup() -> None:
     create_demo_user_if_missing()
     if os.path.exists(SAMPLE_CSV):
         from data.db import get_conn
-        # Get demo user id
         conn = get_conn()
         row = conn.execute("SELECT id FROM users WHERE email = ?", ("demo@example.com",)).fetchone()
         conn.close()
@@ -41,9 +42,19 @@ def startup() -> None:
 
 startup()
 
+controller = CookieController()
+
 
 def get_current_user() -> "dict | None":
+    # Check session state first (fast path)
     token = st.session_state.get("token")
+
+    # Fall back to cookie on fresh load / refresh
+    if not token:
+        token = controller.get(COOKIE_NAME)
+        if token:
+            st.session_state["token"] = token
+
     if not token:
         return None
     return decode_token(token)
@@ -53,7 +64,7 @@ def main() -> None:
     user = get_current_user()
 
     if not user:
-        show_login_page()
+        show_login_page(on_login=lambda token: _handle_login(token))
         return
 
     # Sidebar
@@ -68,6 +79,7 @@ def main() -> None:
         )
         st.divider()
         if st.button("Logout", use_container_width=True):
+            controller.remove(COOKIE_NAME)
             st.session_state.clear()
             st.rerun()
 
@@ -79,6 +91,12 @@ def main() -> None:
         show_upload_page(user_id)
     elif page == "Document Q&A":
         show_rag_page(user_id)
+
+
+def _handle_login(token: str) -> None:
+    st.session_state["token"] = token
+    controller.set(COOKIE_NAME, token, max_age=86400)  # 24 hours
+    st.rerun()
 
 
 main()

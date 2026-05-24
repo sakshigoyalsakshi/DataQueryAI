@@ -50,23 +50,26 @@ def show_rag_page(user_id: str) -> None:
     with st.expander("Upload a PDF", expanded=True):
         uploaded = st.file_uploader("Choose a PDF file", type=["pdf"])
         if uploaded:
-            with st.spinner("Parsing and indexing PDF..."):
-                try:
-                    file_bytes = uploaded.read()
-                    chunks = extract_chunks(file_bytes, uploaded.name)
-                    if not chunks:
-                        st.error("Could not extract text from this PDF. It may be image-based or encrypted.")
-                    else:
-                        doc_id = str(uuid.uuid4())
-                        add_chunks(user_id, chunks, doc_id)
-                        page_count = max(c["page"] for c in chunks)
-                        _save_pdf_meta(user_id, doc_id, uploaded.name, page_count, len(chunks))
-                        st.success(
-                            f"Indexed **{uploaded.name}** — {page_count} pages, {len(chunks)} chunks"
-                        )
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Failed to process PDF: {e}")
+            file_key = f"{uploaded.name}_{uploaded.size}"
+            if st.session_state.get("last_uploaded_pdf") != file_key:
+                with st.spinner("Parsing and indexing PDF..."):
+                    try:
+                        file_bytes = uploaded.read()
+                        chunks = extract_chunks(file_bytes, uploaded.name)
+                        if not chunks:
+                            st.error("Could not extract text from this PDF. It may be image-based or encrypted.")
+                        else:
+                            doc_id = str(uuid.uuid4())
+                            add_chunks(user_id, chunks, doc_id)
+                            page_count = max(c["page"] for c in chunks)
+                            _save_pdf_meta(user_id, doc_id, uploaded.name, page_count, len(chunks))
+                            st.session_state["last_uploaded_pdf"] = file_key
+                            st.success(
+                                f"Indexed **{uploaded.name}** — {page_count} pages, {len(chunks)} chunks"
+                            )
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to process PDF: {e}")
 
     st.divider()
 

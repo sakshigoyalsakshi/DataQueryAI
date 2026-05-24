@@ -11,23 +11,27 @@ def show_upload_page(user_id: str) -> None:
     with st.expander("Upload a new CSV", expanded=True):
         uploaded = st.file_uploader("Choose a CSV file (max 10 MB)", type=["csv"])
         if uploaded:
-            if uploaded.size > 10 * 1024 * 1024:
-                st.error("File exceeds 10 MB limit.")
-            else:
-                with st.spinner("Loading and storing CSV..."):
-                    try:
-                        df = pd.read_csv(uploaded)
-                        if df.empty or len(df.columns) == 0:
-                            st.error("CSV appears to be empty or has no columns.")
-                        else:
-                            meta = store_csv(user_id, uploaded.name, df)
-                            st.success(
-                                f"Uploaded **{uploaded.name}** — {meta['row_count']:,} rows, "
-                                f"{len(meta['columns_info'])} columns"
-                            )
-                            st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed to parse CSV: {e}")
+            # Use file name + size as a unique key to avoid re-processing on reruns
+            file_key = f"{uploaded.name}_{uploaded.size}"
+            if st.session_state.get("last_uploaded_csv") != file_key:
+                if uploaded.size > 10 * 1024 * 1024:
+                    st.error("File exceeds 10 MB limit.")
+                else:
+                    with st.spinner("Loading and storing CSV..."):
+                        try:
+                            df = pd.read_csv(uploaded)
+                            if df.empty or len(df.columns) == 0:
+                                st.error("CSV appears to be empty or has no columns.")
+                            else:
+                                meta = store_csv(user_id, uploaded.name, df)
+                                st.session_state["last_uploaded_csv"] = file_key
+                                st.success(
+                                    f"Uploaded **{uploaded.name}** — {meta['row_count']:,} rows, "
+                                    f"{len(meta['columns_info'])} columns"
+                                )
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to parse CSV: {e}")
 
     st.divider()
 
