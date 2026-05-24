@@ -4,7 +4,7 @@ An intelligent data query and visualization system that lets you ask natural lan
 
 ## Live Demo
 
-- **URL:** `<your-railway-url>`
+- **URL:** https://dataqueryai-production.up.railway.app/
 - **Test credentials:** `demo@example.com` / `demo1234`
 - **Pre-loaded CSV:** `ecommerce_sales.csv` (650 rows of e-commerce order data)
 - **Pre-loaded PDF:** `business_report.pdf` (Global E-commerce Industry Report 2023, 8 pages)
