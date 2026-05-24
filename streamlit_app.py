@@ -21,6 +21,7 @@ from ui.login_page import show_login_page
 from ui.upload_page import show_upload_page
 from ui.query_page import show_query_page
 from ui.rag_page import show_rag_page
+from ui.ask_page import show_ask_page
 
 SAMPLE_CSV = os.path.join(os.path.dirname(__file__), "sample_data", "ecommerce_sales.csv")
 SAMPLE_PDF = os.path.join(os.path.dirname(__file__), "sample_data", "business_report.pdf")
@@ -110,7 +111,7 @@ def main() -> None:
         st.divider()
         page = st.radio(
             "Navigate",
-            ["Query Data", "My Datasets", "Document Q&A"],
+            ["Ask Anything", "Query Data", "My Datasets", "Document Q&A"],
             label_visibility="collapsed",
         )
         st.divider()
@@ -121,7 +122,9 @@ def main() -> None:
 
     user_id = user["sub"]
 
-    if page == "Query Data":
+    if page == "Ask Anything":
+        show_ask_page(user_id)
+    elif page == "Query Data":
         show_query_page(user_id)
     elif page == "My Datasets":
         show_upload_page(user_id)
