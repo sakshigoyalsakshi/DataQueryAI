@@ -92,7 +92,14 @@ def show_rag_page(user_id: str) -> None:
         return
 
     # Q&A section
-    st.subheader("Ask a Question")
+    col_title, col_btn = st.columns([4, 1])
+    with col_title:
+        st.subheader("Ask a Question")
+    with col_btn:
+        st.write("")
+        if st.button("Clear history", use_container_width=True, key="clear_rag"):
+            st.session_state["rag_history"] = []
+            st.rerun()
 
     if "rag_history" not in st.session_state:
         st.session_state["rag_history"] = []

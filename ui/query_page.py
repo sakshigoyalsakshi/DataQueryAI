@@ -43,7 +43,7 @@ def show_query_page(user_id: str) -> None:
         st.write("")
         st.write("")
         if st.button("Clear history", use_container_width=True):
-            st.session_state["query_history"] = []
+            st.session_state[f"query_history_{file_options[selected_name]['table_name']}"] = []
             st.rerun()
 
     selected = file_options[selected_name]

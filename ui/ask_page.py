@@ -184,6 +184,13 @@ def show_ask_page(user_id: str) -> None:
     if "ask_history" not in st.session_state:
         st.session_state["ask_history"] = []
 
+    if st.session_state["ask_history"]:
+        col_spacer, col_btn = st.columns([4, 1])
+        with col_btn:
+            if st.button("Clear history", use_container_width=True, key="clear_ask"):
+                st.session_state["ask_history"] = []
+                st.rerun()
+
     # Replay all previous turns with full charts/answers
     for turn in st.session_state["ask_history"]:
         with st.chat_message("user"):
