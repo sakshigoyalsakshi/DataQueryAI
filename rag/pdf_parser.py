@@ -2,7 +2,7 @@ import io
 from pypdf import PdfReader
 
 
-def extract_chunks(file_bytes: bytes, filename: str, chunk_size: int = 500, overlap: int = 50) -> list[dict]:
+def extract_chunks(file_bytes: bytes, filename: str, chunk_size: int = 1200, overlap: int = 150) -> list[dict]:
     """
     Extract text from a PDF and split into overlapping chunks.
     Returns list of {text, filename, page, chunk_index}.

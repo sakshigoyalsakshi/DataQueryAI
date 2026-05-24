@@ -35,7 +35,7 @@ def add_chunks(user_id: str, chunks: list[dict], doc_id: str) -> None:
     collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
 
 
-def query_chunks(user_id: str, question: str, n_results: int = 5) -> list[dict]:
+def query_chunks(user_id: str, question: str, n_results: int = 6) -> list[dict]:
     """Return top-n most relevant chunks for the question."""
     collection = get_collection(user_id)
     if collection.count() == 0:
